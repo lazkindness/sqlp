@@ -2,7 +2,6 @@ extern crate time_ as time;
 
 use std::net::SocketAddr;
 use std::ops::Bound;
-use std::str::FromStr;
 
 use sqlx::postgres::types::{Oid, PgCiText, PgInterval, PgMoney, PgRange};
 use sqlx::postgres::Postgres;

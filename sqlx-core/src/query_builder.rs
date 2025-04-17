@@ -30,7 +30,7 @@ where
     arguments: Option<<DB as Database>::Arguments<'args>>,
 }
 
-impl<'args, DB: Database> Default for QueryBuilder<'args, DB> {
+impl<DB: Database> Default for QueryBuilder<'_, DB> {
     fn default() -> Self {
         QueryBuilder {
             init_len: 0,

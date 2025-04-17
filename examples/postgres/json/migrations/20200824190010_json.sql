@@ -1,5 +1,0 @@
-CREATE TABLE IF NOT EXISTS people
-(
-    id     BIGSERIAL PRIMARY KEY,
-    person JSONB NOT NULL
-);
