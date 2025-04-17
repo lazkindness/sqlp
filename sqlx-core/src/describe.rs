@@ -1,6 +1,6 @@
 use crate::database::Database;
 use either::Either;
-use std::convert::identity;
+use std::{collections::HashMap, convert::identity, sync::Arc};
 
 /// Provides extended information on a statement.
 ///
@@ -22,6 +22,7 @@ pub struct Describe<DB: Database> {
     pub columns: Vec<DB::Column>,
     pub parameters: Option<Either<Vec<DB::TypeInfo>, usize>>,
     pub nullable: Vec<Option<bool>>,
+    pub known_enum_tys: HashMap<String, Arc<[String]>>,
 }
 
 impl<DB: Database> Describe<DB> {
@@ -96,6 +97,7 @@ impl<DB: Database> Describe<DB> {
             columns,
             parameters,
             nullable: self.nullable,
+            known_enum_tys: unreachable!("this function is never called by postgres"),
         })
     }
 }

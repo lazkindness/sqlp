@@ -3,7 +3,7 @@ use crate::query::QueryMacroInput;
 use either::Either;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
-use sqlx_core::describe::Describe;
+use sqlx_core::{describe::Describe, type_info::TypeInfo};
 use syn::spanned::Spanned;
 
 /// Returns a tokenstream which typechecks the arguments passed to the macro
@@ -24,8 +24,6 @@ pub fn quote_args<DB: DatabaseExt>(
         .map(|i| format_ident!("arg{}", i))
         .collect::<Vec<_>>();
 
-    let arg_name = &arg_names;
-
     let Some(Either::Left(params)) = info.parameters() else {
         unimplemented!("only normal parameter inputs are supported safely");
     };
@@ -33,25 +31,35 @@ pub fn quote_args<DB: DatabaseExt>(
     let params = params
         .iter()
         .map(|param| {
-            DB::param_type_for_id(param)
-                .expect("only basic types are supported")
-                .parse::<TokenStream>()
-                .expect("unparsable type, consider migrating your db to a simpler type")
+            let maybe_real_type = DB::param_type_for_id(param);
+            let known_enum_type = info.known_enum_tys.get(param.name());
+
+            match (maybe_real_type, known_enum_type) {
+                (Some(rt), _) => rt.parse::<TokenStream>().map_err(|err| {
+                    format!("failed to parse parameter type `{param}`: {err}").into()
+                }),
+                (None, Some(et)) => {
+                    // if we have an enum, we can coerce it into a string.
+                    // TODO: add a trait that we actually require here
+                    ephemeral_enum_ty(param.name(), et)
+                }
+                _ => Err(format!("parameter type `{param}` is not supported").into()),
+            }
         })
-        .collect::<Vec<_>>();
+        .collect::<crate::Result<Vec<_>>>()?;
 
     let arg_bindings = input
         .arg_exprs
         .iter()
         .cloned()
         .zip(params.iter())
-        .zip(arg_name)
-        .map(|((expr, arg_name), param)| -> TokenStream {
-            quote_spanned!(expr.span() => {
-                // TODO: make something like `sqlx::DbFrom` so that these from impls can be
+        .zip(&arg_names)
+        .map(|((expr, param), arg_name)| -> TokenStream {
+            quote_spanned!(expr.span() =>
+                // TODO: make something like `sqlx::DbInto` so that these from impls can be
                 // disambiguated from any other from impl
-                let #arg_name = &(<#param as ::core::convert::From>::from(#expr));
-            })
+                let #arg_name = &(<_ as ::core::convert::Into<#param>>::into(#expr));
+            )
         })
         .collect::<TokenStream>();
 
@@ -92,9 +100,36 @@ pub fn quote_args<DB: DatabaseExt>(
         let mut query_args = <#db_path as ::sqlx::database::Database>::Arguments::<'_>::default();
         query_args.reserve(
             #args_count,
-            0 #(+ ::sqlx::encode::Encode::<#db_path>::size_hint(#arg_name))*
+            0 #(+ ::sqlx::encode::Encode::<#db_path>::size_hint(#arg_names))*
         );
         let query_args = ::core::result::Result::<_, ::sqlx::error::BoxDynError>::Ok(query_args)
-        #(.and_then(move |mut query_args| query_args.add(#arg_name).map(move |()| query_args) ))*;
+        #(.and_then(move |mut query_args| query_args.add(#arg_names).map(move |()| query_args) ))*;
+    })
+}
+
+fn ephemeral_enum_ty(name: &str, args: &[String]) -> crate::Result<TokenStream> {
+    let enum_name = format_ident!("{name}");
+
+    //     Ok(quote! {
+    //         pub enum #enum_name {
+    //             #(
+    //                 #[sqlx(rename = #args)]
+    //                 #args,
+    //             )*
+    //         }
+    //
+    //         impl ::core::convert::From<#enum_name> for ::std::string::String {
+    //             fn from(value: #enum_name) -> Self {
+    //                 match value {
+    //                     #(
+    //                         #enum_name::#args => #args.to_string(),
+    //                     )*
+    //                 }
+    //             }
+    //         }
+    //     })
+
+    Ok(quote! {
+        ::std::string::String
     })
 }

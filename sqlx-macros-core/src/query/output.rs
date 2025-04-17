@@ -21,8 +21,6 @@ pub struct RustColumn {
 
 pub(super) enum ColumnType {
     Exact(TokenStream),
-    Wildcard,
-    OptWildcard,
 }
 
 impl ColumnType {
@@ -35,8 +33,6 @@ impl ToTokens for ColumnType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.append_all(match &self {
             ColumnType::Exact(type_) => type_.clone().into_iter(),
-            ColumnType::Wildcard => quote! { _ }.into_iter(),
-            ColumnType::OptWildcard => quote! { ::std::option::Option<_> }.into_iter(),
         })
     }
 }
@@ -66,7 +62,6 @@ enum ColumnNullabilityOverride {
 
 enum ColumnTypeOverride {
     Exact(Type),
-    Wildcard,
     None,
 }
 
@@ -101,9 +96,6 @@ fn column_to_rust<DB: DatabaseExt>(describe: &Describe<DB>, i: usize) -> crate::
         (ColumnTypeOverride::Exact(type_), true) => {
             ColumnType::Exact(quote! { ::std::option::Option<#type_> })
         }
-
-        (ColumnTypeOverride::Wildcard, false) => ColumnType::Wildcard,
-        (ColumnTypeOverride::Wildcard, true) => ColumnType::OptWildcard,
 
         (ColumnTypeOverride::None, _) => {
             let type_ = get_column_type::<DB>(i, column);
@@ -144,24 +136,9 @@ pub fn quote_query_as<DB: DatabaseExt>(
                     // "try expression alternatives have incompatible types"
                     // it doesn't seem to hurt inference in the other branches
                     #[allow(non_snake_case)]
-                    let #var_name = row.try_get_unchecked::<#type_, _>(#i)?.into();
+                    let #var_name = row.try_get_unchecked::<#type_, _>(#i)?;
                 },
-                // type was overridden to be a wildcard so we fallback to the runtime check
-                (true, ColumnType::Wildcard) => quote! (
-                #[allow(non_snake_case)]
-                let #var_name = row.try_get(#i)?;
-                ),
-                (true, ColumnType::OptWildcard) => {
-                    quote! (
-                    #[allow(non_snake_case)]
-                    let #var_name = row.try_get::<::std::option::Option<_>, _>(#i)?;
-                    )
-                }
-                // macro is the `_unchecked!()` variant so this will die in decoding if it's wrong
-                (false, _) => quote!(
-                #[allow(non_snake_case)]
-                let #var_name = row.try_get_unchecked(#i)?;
-                ),
+                _ => unimplemented!("inputs must be checked"),
             }
         },
     );
@@ -186,7 +163,10 @@ pub fn quote_query_as<DB: DatabaseExt>(
 
             #(#instantiations)*
 
-            ::std::result::Result::Ok(#out_ty { #(#ident: #var_name),* })
+            ::std::result::Result::Ok(#out_ty {
+                // TODO: make a custom into trait to disambiguate sqlx intos
+                #(#ident: #var_name.into()),*
+            })
         })
     }
 }
@@ -309,7 +289,7 @@ impl Parse for ColumnOverride {
             let ty = Type::parse(input)?;
 
             if let Type::Infer(_) = ty {
-                ColumnTypeOverride::Wildcard
+                unimplemented!("types cannot be inferred")
             } else {
                 ColumnTypeOverride::Exact(ty)
             }

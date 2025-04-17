@@ -421,6 +421,19 @@ WHERE rngtypid = $1
         !is_cockroachdb && !is_materialize && !is_questdb
     }
 
+    pub(crate) async fn known_enum_types(
+        &self,
+    ) -> std::collections::HashMap<String, Arc<[String]>> {
+        self.inner
+            .cache_type_info
+            .values()
+            .filter_map(|info| match info.0.kind() {
+                PgTypeKind::Enum(e) => Some((info.name().to_string(), Arc::clone(e))),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub(crate) async fn get_nullable_for_columns(
         &mut self,
         stmt_id: StatementId,

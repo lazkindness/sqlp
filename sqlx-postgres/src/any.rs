@@ -183,6 +183,7 @@ impl AnyConnectionBackend for PgConnection {
                 columns,
                 parameters,
                 nullable: describe.nullable,
+                known_enum_tys: describe.known_enum_tys,
             })
         })
     }

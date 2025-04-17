@@ -471,10 +471,13 @@ impl<'c> Executor<'c> for &'c mut PgConnection {
 
             let nullable = self.get_nullable_for_columns(stmt_id, &metadata).await?;
 
+            let known_enum_tys = self.known_enum_types().await;
+
             Ok(Describe {
                 columns: metadata.columns.clone(),
                 nullable,
                 parameters: Some(Either::Left(metadata.parameters.clone())),
+                known_enum_tys,
             })
         })
     }
