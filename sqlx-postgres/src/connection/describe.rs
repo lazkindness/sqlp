@@ -564,28 +564,47 @@ WHERE rngtypid = $1
 }
 
 fn visit_plan(plan: &Plan, outputs: &[String], nullables: &mut Vec<Option<bool>>) {
-    if let Some(plan_outputs) = &plan.output {
-        // all outputs of a Full Join must be marked nullable
-        // otherwise, all outputs of the inner half of an outer join must be marked nullable
-        if plan.join_type.as_deref() == Some("Full")
-            || plan.parent_relation.as_deref() == Some("Inner")
-        {
-            for output in plan_outputs {
-                if let Some(i) = outputs.iter().position(|o| o == output) {
-                    // N.B. this may produce false positives but those don't cause runtime errors
-                    nullables[i] = Some(true);
-                }
+    match (plan.join_type.as_deref(), plan.plans.as_deref()) {
+        // full join: every column output by this plan can be null
+        (Some("Full"), _) => {
+            for idx in plan_outputs_indices(plan, outputs) {
+                nullables[idx] = Some(true);
             }
         }
+        // right join: left side columns are nullable, then recurse on right
+        (Some("Right"), Some([left, right])) => {
+            for idx in plan_outputs_indices(left, outputs) {
+                nullables[idx] = Some(true);
+            }
+            visit_plan(right, outputs, nullables);
+        }
+        // left join: right side columns are nullable, then recurse on left
+        (Some("Left"), Some([left, right])) => {
+            for idx in plan_outputs_indices(right, outputs) {
+                nullables[idx] = Some(true);
+            }
+            visit_plan(left, outputs, nullables);
+        }
+        // any other join type (including inner) just recurse into all children
+        (_, Some(children)) => {
+            for child in children {
+                visit_plan(child, outputs, nullables);
+            }
+        }
+        _ => {}
     }
+}
 
-    if let Some(plans) = &plan.plans {
-        if let Some("Left") | Some("Right") = plan.join_type.as_deref() {
-            for plan in plans {
-                visit_plan(plan, outputs, nullables);
+fn plan_outputs_indices(plan: &Plan, query_outputs: &[String]) -> Vec<usize> {
+    let mut indices = Vec::new();
+    if let Some(plan_outputs) = &plan.output {
+        for output in plan_outputs {
+            if let Some(index) = query_outputs.iter().position(|o| o == output) {
+                indices.push(index);
             }
         }
     }
+    indices
 }
 
 #[derive(serde::Deserialize, Debug)]
